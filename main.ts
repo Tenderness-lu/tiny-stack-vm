@@ -15,14 +15,18 @@ const T = {
   64: [0, 1, 1], 65: [0, 2, 0], 80: [0, 1, 0], 81: [0, 1, 0], 82: [0, 0, 1], 83: [0, 1, 0],
 };
 
-const OUT = new Uint8Array(65536); // shared output buffer, sliced per instance
+// Machine limits from ISA.md: 256-value data stack, 64-deep call stack,
+// 256-word memory, 1,000,000 steps, 65,536 output bytes.
+const STACK_MAX = 256, CALL_MAX = 64, MEM_SIZE = 256;
+const STEP_LIMIT = 1000000, OUT_LIMIT = 65536;
+const OUT = new Uint8Array(OUT_LIMIT); // shared output buffer, sliced per instance
 
 // Returns [output length, exit code].
 function run(p, q) {
-  const n = p.length, D = new Int32Array(256), C = new Int32Array(64), M = new Int32Array(256);
+  const n = p.length, D = new Int32Array(STACK_MAX), C = new Int32Array(CALL_MAX), M = new Int32Array(MEM_SIZE);
   let s = 0, c = 0, ol = 0, ip = 0, pc = 0, st = 0;
   for (;;) {
-    if (st === 1000000) return [ol, 10];
+    if (st === STEP_LIMIT) return [ol, 10];
     if (pc < 0 || pc >= n) return [ol, 9];
     const op = p[pc], t = T[op];
     if (!t) return [ol, 5];
@@ -31,7 +35,7 @@ function run(p, q) {
     st++;
     const nx = pc + 1 + im;
     if (s < t[1]) return [ol, 2];
-    if (s - t[1] + t[2] > 256) return [ol, 3];
+    if (s - t[1] + t[2] > STACK_MAX) return [ol, 3];
     pc = nx;
     switch (op) {
       case 0: return [ol, 0];
@@ -74,30 +78,30 @@ function run(p, q) {
         break;
       }
       case 51:
-        if (c === 64) return [ol, 7];
+        if (c === CALL_MAX) return [ol, 7];
         C[c++] = nx; pc = p[nx - 2] | (p[nx - 1] << 8); break;
       case 52:
         if (c === 0) return [ol, 8];
         pc = C[--c]; break;
       case 64: {
         const a = D[s - 1];
-        if (a < 0 || a > 255) return [ol, 6];
+        if (a < 0 || a >= MEM_SIZE) return [ol, 6];
         D[s - 1] = M[a]; break;
       }
       case 65: {
         const a = D[s - 1], v = D[s - 2];
-        if (a < 0 || a > 255) return [ol, 6];
+        if (a < 0 || a >= MEM_SIZE) return [ol, 6];
         s -= 2; M[a] = v; break;
       }
       case 80: {
         const g = String(D[s - 1]);
-        if (ol + g.length > 65536) return [ol, 11];
+        if (ol + g.length > OUT_LIMIT) return [ol, 11];
         s--;
         for (let i = 0; i < g.length; i++) OUT[ol++] = g.charCodeAt(i);
         break;
       }
       case 81:
-        if (ol + 1 > 65536) return [ol, 11];
+        if (ol + 1 > OUT_LIMIT) return [ol, 11];
         OUT[ol++] = D[--s] & 255; break;
       case 82: D[s++] = ip < q.length ? q[ip++] : -1; break;
       case 83: return [ol, D[--s] & 255];
